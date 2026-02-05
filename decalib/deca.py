@@ -31,42 +31,70 @@ from .models.decoders import Generator
 from .utils import util
 from .utils.rotation_converter import batch_euler2axis
 from .utils.tensor_cropper import transform_points
-from .datasets import datasets
+from .datasets.datasets import TestData
 from .utils.config import cfg
-torch.backends.cudnn.benchmark = True
+if torch.cuda.is_available():
+    torch.backends.cudnn.benchmark = True
 
 class DECA(nn.Module):
-    def __init__(self, config=None, device='cuda'):
+    def __init__(self, config=None, device='cuda' if torch.cuda.is_available() else 'cpu', use_detail=True):
+        print("Initializing DECA...")
+        start_time = time()
         super(DECA, self).__init__()
         if config is None:
             self.cfg = cfg
         else:
             self.cfg = config
         self.device = device
+        self.use_detail = use_detail
         self.image_size = self.cfg.dataset.image_size
         self.uv_size = self.cfg.model.uv_size
 
         self._create_model(self.cfg.model)
+        print(f"  - Model creation took: {time() - start_time:.4f}s")
+        
+        setup_renderer_start = time()
         self._setup_renderer(self.cfg.model)
+        print(f"  - Renderer setup took: {time() - setup_renderer_start:.4f}s")
+        print(f"Total DECA initialization took: {time() - start_time:.4f}s")
 
     def _setup_renderer(self, model_cfg):
+        t = time()
         set_rasterizer(self.cfg.rasterizer_type)
         self.render = SRenderY(self.image_size, obj_filename=model_cfg.topology_path, uv_size=model_cfg.uv_size, rasterizer_type=self.cfg.rasterizer_type).to(self.device)
+        print(f"    - SRenderY init took: {time() - t:.4f}s")
+        
+        t = time()
         # face mask for rendering details
         mask = imread(model_cfg.face_eye_mask_path).astype(np.float32)/255.; mask = torch.from_numpy(mask[:,:,0])[None,None,:,:].contiguous()
         self.uv_face_eye_mask = F.interpolate(mask, [model_cfg.uv_size, model_cfg.uv_size]).to(self.device)
+        print(f"    - Face eye mask load/interpolate took: {time() - t:.4f}s")
+        
+        t = time()
         mask = imread(model_cfg.face_mask_path).astype(np.float32)/255.; mask = torch.from_numpy(mask[:,:,0])[None,None,:,:].contiguous()
         self.uv_face_mask = F.interpolate(mask, [model_cfg.uv_size, model_cfg.uv_size]).to(self.device)
+        print(f"    - Face mask load/interpolate took: {time() - t:.4f}s")
+        
+        t = time()
         # displacement correction
         fixed_dis = np.load(model_cfg.fixed_displacement_path)
         self.fixed_uv_dis = torch.tensor(fixed_dis).float().to(self.device)
+        print(f"    - Fixed displacement load took: {time() - t:.4f}s")
+        
+        t = time()
         # mean texture
         mean_texture = imread(model_cfg.mean_tex_path).astype(np.float32)/255.; mean_texture = torch.from_numpy(mean_texture.transpose(2,0,1))[None,:,:,:].contiguous()
         self.mean_texture = F.interpolate(mean_texture, [model_cfg.uv_size, model_cfg.uv_size]).to(self.device)
+        print(f"    - Mean texture load took: {time() - t:.4f}s")
+        
+        t = time()
         # dense mesh template, for save detail mesh
-        self.dense_template = np.load(model_cfg.dense_template_path, allow_pickle=True, encoding='latin1').item()
+        if self.use_detail:
+            self.dense_template = np.load(model_cfg.dense_template_path, allow_pickle=True, encoding='latin1').item()
+        print(f"    - Dense template load took: {time() - t:.4f}s")
 
     def _create_model(self, model_cfg):
+        t = time()
         # set up parameters
         self.n_param = model_cfg.n_shape+model_cfg.n_tex+model_cfg.n_exp+model_cfg.n_pose+model_cfg.n_cam+model_cfg.n_light
         self.n_detail = model_cfg.n_detail
@@ -76,28 +104,37 @@ class DECA(nn.Module):
 
         # encoders
         self.E_flame = ResnetEncoder(outsize=self.n_param).to(self.device) 
-        self.E_detail = ResnetEncoder(outsize=self.n_detail).to(self.device)
+        if self.use_detail:
+            self.E_detail = ResnetEncoder(outsize=self.n_detail).to(self.device)
         # decoders
         self.flame = FLAME(model_cfg).to(self.device)
         if model_cfg.use_tex:
             self.flametex = FLAMETex(model_cfg).to(self.device)
-        self.D_detail = Generator(latent_dim=self.n_detail+self.n_cond, out_channels=1, out_scale=model_cfg.max_z, sample_mode = 'bilinear').to(self.device)
+        if self.use_detail:
+            self.D_detail = Generator(latent_dim=self.n_detail+self.n_cond, out_channels=1, out_scale=model_cfg.max_z, sample_mode = 'bilinear').to(self.device)
+        print(f"    - Sub-models init took: {time() - t:.4f}s")
+        
+        t = time()
         # resume model
         model_path = self.cfg.pretrained_modelpath
         if os.path.exists(model_path):
-            print(f'trained model found. load {model_path}')
-            checkpoint = torch.load(model_path)
+            print(f'    - trained model found. load {model_path}')
+            checkpoint = torch.load(model_path, map_location=self.device)
             self.checkpoint = checkpoint
             util.copy_state_dict(self.E_flame.state_dict(), checkpoint['E_flame'])
-            util.copy_state_dict(self.E_detail.state_dict(), checkpoint['E_detail'])
-            util.copy_state_dict(self.D_detail.state_dict(), checkpoint['D_detail'])
+            if self.use_detail:
+                util.copy_state_dict(self.E_detail.state_dict(), checkpoint['E_detail'])
+                util.copy_state_dict(self.D_detail.state_dict(), checkpoint['D_detail'])
         else:
             print(f'please check model path: {model_path}')
             # exit()
+        print(f"    - Model weights load took: {time() - t:.4f}s")
+        
         # eval mode
         self.E_flame.eval()
-        self.E_detail.eval()
-        self.D_detail.eval()
+        if self.use_detail:
+            self.E_detail.eval()
+            self.D_detail.eval()
 
     def decompose_code(self, code, num_dict):
         ''' Convert a flattened parameter vector to a dictionary of parameters
@@ -312,7 +349,7 @@ class DECA(nn.Module):
     def run(self, imagepath, iscrop=True):
         ''' An api for running deca given an image path
         '''
-        testdata = datasets.TestData(imagepath)
+        testdata = TestData(imagepath)
         images = testdata[0]['image'].to(self.device)[None,...]
         codedict = self.encode(images)
         opdict, visdict = self.decode(codedict)

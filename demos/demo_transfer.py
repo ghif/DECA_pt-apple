@@ -13,6 +13,15 @@
 # For comments or questions, please email us at deca@tue.mpg.de
 # For commercial licensing contact, please contact ps-license@tuebingen.mpg.de
 
+"""
+This script demonstrates expression transfer using DECA.
+It performs the following:
+1. Reconstructs a 3D head model from a reference identity image.
+2. Extracts expression parameters from a source expression image.
+3. Transfers the expression (and jaw pose) from the source to the reference identity.
+4. Saves the results, including the reconstructed reference and the animated face with the transferred expression.
+"""
+
 import os, sys
 import cv2
 import numpy as np
@@ -32,8 +41,8 @@ def main(args):
     os.makedirs(savefolder, exist_ok=True)
 
     # load test images 
-    testdata = datasets.TestData(args.image_path, iscrop=args.iscrop, face_detector=args.detector)
-    expdata = datasets.TestData(args.exp_path, iscrop=args.iscrop, face_detector=args.detector)
+    testdata = datasets.TestData(args.image_path, iscrop=args.iscrop, face_detector=args.detector, device=device)
+    expdata = datasets.TestData(args.exp_path, iscrop=args.iscrop, face_detector=args.detector, device=device)
 
     # run DECA
     deca_cfg.model.use_tex = args.useTex
@@ -102,8 +111,16 @@ if __name__ == '__main__':
                         help='path to expression')
     parser.add_argument('-s', '--savefolder', default='TestSamples/animation_results', type=str,
                         help='path to the output directory, where results(obj, txt files) will be stored.')
-    parser.add_argument('--device', default='cuda', type=str,
-                        help='set device, cpu for using cpu' )
+    
+    if torch.cuda.is_available():
+        default_device = 'cuda'
+    elif torch.backends.mps.is_available():
+        default_device = 'mps'
+    else:
+        default_device = 'cpu'
+
+    parser.add_argument('--device', default=default_device, type=str,
+                        help='set device, cpu for using cpu, mps for macOS' )
     # rendering option
     parser.add_argument('--rasterizer_type', default='standard', type=str,
                         help='rasterizer type: pytorch3d or standard' )
@@ -128,6 +145,4 @@ if __name__ == '__main__':
                         help='whether to save outputs as .mat' )
     parser.add_argument('--saveImages', default=False, type=lambda x: x.lower() in ['true', '1'],
                         help='whether to save visualization output as seperate images' )
-    main(parser.parse_args())
-
     main(parser.parse_args())

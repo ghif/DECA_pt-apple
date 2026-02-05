@@ -34,14 +34,15 @@ from .models.FLAME import FLAME, FLAMETex
 from .models.decoders import Generator
 from .utils import util
 from .utils.rotation_converter import batch_euler2axis
-from .datasets import datasets
 from .utils.config import cfg
-torch.backends.cudnn.benchmark = True
+# torch.backends.cudnn.benchmark = True
+if torch.cuda.is_available():
+    torch.backends.cudnn.benchmark = True
 from .utils import lossfunc
 from .datasets import build_datasets
 
 class Trainer(object):
-    def __init__(self, model, config=None, device='cuda:0'):
+    def __init__(self, model, config=None, device='cuda:0' if torch.cuda.is_available() else 'cpu'):
         if config is None:
             self.cfg = cfg
         else:
@@ -89,7 +90,7 @@ class Trainer(object):
         # resume training, including model weight, opt, steps
         # import ipdb; ipdb.set_trace()
         if self.cfg.train.resume and os.path.exists(os.path.join(self.cfg.output_dir, 'model.tar')):
-            checkpoint = torch.load(os.path.join(self.cfg.output_dir, 'model.tar'))
+            checkpoint = torch.load(os.path.join(self.cfg.output_dir, 'model.tar'), map_location=self.device)
             for key in model_dict.keys():
                 if key in checkpoint.keys():
                     util.copy_state_dict(model_dict[key], checkpoint[key])
@@ -99,7 +100,7 @@ class Trainer(object):
             logger.info(f"training start from step {self.global_step}")
         # load model weights only
         elif os.path.exists(self.cfg.pretrained_modelpath):
-            checkpoint = torch.load(self.cfg.pretrained_modelpath)
+            checkpoint = torch.load(self.cfg.pretrained_modelpath, map_location=self.device)
             key = 'E_flame'
             util.copy_state_dict(model_dict[key], checkpoint[key])
             self.global_step = 0

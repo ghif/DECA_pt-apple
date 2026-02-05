@@ -172,17 +172,17 @@ def copy_parameter_from_resnet(model, resnet_dict):
 
 def load_ResNet50Model():
     model = ResNet(Bottleneck, [3, 4, 6, 3])
-    copy_parameter_from_resnet(model, torchvision.models.resnet50(pretrained = False).state_dict())
+    copy_parameter_from_resnet(model, torchvision.models.resnet50(weights = None).state_dict())
     return model
 
 def load_ResNet101Model():
     model = ResNet(Bottleneck, [3, 4, 23, 3])
-    copy_parameter_from_resnet(model, torchvision.models.resnet101(pretrained = True).state_dict())
+    copy_parameter_from_resnet(model, torchvision.models.resnet101(weights = 'DEFAULT').state_dict())
     return model
 
 def load_ResNet152Model():
     model = ResNet(Bottleneck, [3, 8, 36, 3])
-    copy_parameter_from_resnet(model, torchvision.models.resnet152(pretrained = True).state_dict())
+    copy_parameter_from_resnet(model, torchvision.models.resnet152(weights = 'DEFAULT').state_dict())
     return model
 
 # model.load_state_dict(checkpoint['model_state_dict'])

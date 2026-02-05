@@ -1,15 +1,19 @@
-# DECA: Detailed Expression Capture and Animation (SIGGRAPH2021)
+# DECA: Apple Silicon Port (SIGGRAPH2021)
 
 <p align="center"> 
 <img src="TestSamples/teaser/results/teaser.gif">
 </p>
 <p align="center">input image, aligned reconstruction, animation with various poses & expressions<p align="center">
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/YadiraF/DECA/blob/master/Detailed_Expression_Capture_and_Animation.ipynb?authuser=1)
+This is a **fork** of the official DECA implementation, refactored to run natively on **Apple Silicon (M1/M2/M3)** using **PyTorch MPS** and removed of all dependencies on **NVIDIA CUDA** and **PyTorch3D**.
 
-This is the official Pytorch implementation of DECA. 
+### Key Changes in this Fork:
+*   **Apple Silicon Support:** Native acceleration via `device='mps'`.
+*   **CUDA-Free:** All custom CUDA kernels have been replaced with high-performance C++ CPU fallbacks.
+*   **PyTorch3D-Free:** Removed dependencies on the heavy PyTorch3D library, using a custom standard rasterizer instead.
+*   **Modern Python:** Updated for Python 3.13 compatibility.
 
-DECA reconstructs a 3D head model with detailed facial geometry from a single input image. The resulting 3D head model can be easily animated. Please refer to the [arXiv paper](https://arxiv.org/abs/2012.04012) for more details.
+DECA reconstructs a 3D head model with detailed facial geometry from a single input image. The resulting 3D head model can be easily animated. Please refer to the [original arXiv paper](https://arxiv.org/abs/2012.04012) for more details.
 
 The main features:
 
@@ -19,25 +23,32 @@ The main features:
 * **Accurate:** state-of-the-art 3D face shape reconstruction on the [NoW Challenge](https://ringnet.is.tue.mpg.de/challenge) benchmark dataset.
   
 ## Getting Started
-Clone the repo:
+Clone this port:
   ```bash
-  git clone https://github.com/YadiraF/DECA
-  cd DECA
+  git clone https://github.com/ghif/DECA_pt-apple.git
+  cd DECA_pt-apple
   ```  
 
 ### Requirements
-* Python 3.7 (numpy, skimage, scipy, opencv)  
-* PyTorch >= 1.6 (pytorch3d)  
+* Python 3.13 (numpy, skimage, scipy, opencv)  
+* PyTorch >= 2.10 (Apple Silicon MPS support)  
 * face-alignment (Optional for detecting face)  
-  You can run 
-  ```bash
-  pip install -r requirements.txt
-  ```
-  Or use virtual environment by runing 
-  ```bash
-  bash install_conda.sh
-  ```
-  For visualization, we use our rasterizer that uses pytorch JIT Compiling Extensions. If there occurs a compiling error, you can install [pytorch3d](https://github.com/facebookresearch/pytorch3d/blob/master/INSTALL.md) instead and set --rasterizer_type=pytorch3d when running the demos.
+
+### Environment Setup (Recommended)
+We recommend using [uv](https://github.com/astral-sh/uv) for fast and efficient dependency management.
+
+```bash
+# Create a virtual environment named .pt_mps with Python 3.13
+uv venv .pt_mps --python 3.13
+
+# Activate the environment
+source .pt_mps/bin/activate
+
+# Install dependencies
+uv pip install -r requirements.txt
+```
+
+For visualization, we use a custom standard rasterizer that uses a C++ CPU extension. This ensures compatibility with Apple Silicon (MPS) and removes dependencies on CUDA or PyTorch3D.
 
 ### Usage
 1. Prepare data   

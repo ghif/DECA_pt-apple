@@ -1,25 +1,27 @@
-FROM pytorch/pytorch:1.6.0-cuda10.1-cudnn7-devel
+FROM python:3.9-slim
 
-RUN apt-get update && apt-get install -y wget curl git build-essential
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    wget curl git build-essential \
+    libgl1-mesa-glx libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Miniconda
-# ENV PATH="/root/miniconda3/bin:${PATH}"
-# ARG PATH="/root/miniconda3/bin:${PATH}"
-# RUN wget \
-#     https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh \
-#     && mkdir /root/.conda \
-#     && bash Miniconda3-latest-Linux-x86_64.sh -b \
-#     && rm -f Miniconda3-latest-Linux-x86_64.sh 
+WORKDIR /app
 
-# RUN conda create -n xp
-# SHELL ["conda", "run", "--no-capture-output", "-n", "xp", "/bin/bash", "-c"]
-# RUN conda install python=3.7 \
-#     && conda install -c conda-forge jupyterlab \
-#     && conda init bash \
-#     && echo "conda activate xp" >> ~/.bashrc
+# Install dependencies
+COPY requirements.txt .
 
-RUN pip install ipykernel jupyterlab jupyter_http_over_ws \
-    && jupyter serverextension enable --py jupyter_http_over_ws
+# Install CPU-only PyTorch and other requirements
+# We remove specific torch versions from requirements.txt to prefer the CPU build installed below
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
+    sed -i '/torch==/d' requirements.txt && \
+    sed -i '/torchvision==/d' requirements.txt && \
+    pip install --no-cache-dir -r requirements.txt
 
-WORKDIR /content/
-COPY . /content/DECA/
+COPY . .
+
+# Build the CPU rasterizer extension
+WORKDIR /app/decalib/utils/rasterizer
+RUN python setup.py build_ext --inplace
+
+WORKDIR /app

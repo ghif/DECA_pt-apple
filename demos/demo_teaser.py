@@ -13,6 +13,16 @@
 # For comments or questions, please email us at deca@tue.mpg.de
 # For commercial licensing contact, please contact ps-license@tuebingen.mpg.de
 
+"""
+This script generates a teaser GIF for DECA.
+It performs the following:
+1. Reconstructs a 3D head model from input images.
+2. Animates the reconstructed head by:
+    a. Varying the head pose (yaw) to show the shape from different angles.
+    b. Varying the expression (jaw pose) and transferring expressions from other source images.
+3. Saves the resulting animations as a 'teaser.gif' in the output folder.
+"""
+
 import os, sys
 import cv2
 import numpy as np
@@ -36,8 +46,8 @@ def main(args):
     os.makedirs(savefolder, exist_ok=True)
 
     # load test images 
-    testdata = datasets.TestData(args.inputpath, iscrop=args.iscrop, face_detector=args.detector)
-    expdata = datasets.TestData(args.exp_path, iscrop=args.iscrop, face_detector=args.detector)
+    testdata = datasets.TestData(args.inputpath, iscrop=args.iscrop, face_detector=args.detector, device=device)
+    expdata = datasets.TestData(args.exp_path, iscrop=args.iscrop, face_detector=args.detector, device=device)
     # DECA
     deca_cfg.rasterizer_type = args.rasterizer_type
     deca = DECA(config=deca_cfg, device=device)
@@ -59,7 +69,7 @@ def main(args):
             euler_pose[:,1] = k#torch.rand((self.batch_size))*160 - 80
             euler_pose[:,0] = 0#(torch.rand((self.batch_size))*60 - 30)*(2./euler_pose[:,1].abs())
             euler_pose[:,2] = 0#(torch.rand((self.batch_size))*60 - 30)*(2./euler_pose[:,1].abs())
-            global_pose = batch_euler2axis(deg2rad(euler_pose[:,:3].cuda())) 
+            global_pose = batch_euler2axis(deg2rad(euler_pose[:,:3].to(device))) 
             codedict['pose'][:,:3] = global_pose
             codedict['cam'][:,:] = 0.
             codedict['cam'][:,0] = 8
@@ -69,7 +79,7 @@ def main(args):
             visdict_list.append(visdict)
 
         euler_pose = torch.zeros((1, 3))
-        global_pose = batch_euler2axis(deg2rad(euler_pose[:,:3].cuda())) 
+        global_pose = batch_euler2axis(deg2rad(euler_pose[:,:3].to(device))) 
         codedict['pose'][:,:3] = global_pose
         for (i,k) in enumerate(range(0,31,2)): #jaw angle from -50 to 50        
             # expression: jaw pose
@@ -77,7 +87,7 @@ def main(args):
             euler_pose[:,0] = k#torch.rand((self.batch_size))*160 - 80
             euler_pose[:,1] = 0#(torch.rand((self.batch_size))*60 - 30)*(2./euler_pose[:,1].abs())
             euler_pose[:,2] = 0#(torch.rand((self.batch_size))*60 - 30)*(2./euler_pose[:,1].abs())
-            jaw_pose = batch_euler2axis(deg2rad(euler_pose[:,:3].cuda())) 
+            jaw_pose = batch_euler2axis(deg2rad(euler_pose[:,:3].to(device))) 
             codedict['pose'][:,3:] = jaw_pose
             _, visdict_view = deca.decode(codedict)     
             visdict_list[i]['exp'] = visdict_view['shape_detail_images']
@@ -103,7 +113,12 @@ def main(args):
             grid_image = deca.visualize(visdict_list_list[j][i])
             grid_image_list.append(grid_image)
         grid_image_all = np.concatenate(grid_image_list, 0)
-        grid_image_all = rescale(grid_image_all, 0.6, multichannel=True) # resize for showing in github
+        grid_image_all = rescale(grid_image_all, 0.6, channel_axis=-1) # resize for showing in github
+        # print(f"grid_image_all shape: {grid_image_all.shape}, dtype: {grid_image_all.dtype}")
+        if grid_image_all.max() <= 1.0:
+            grid_image_all = (grid_image_all * 255).astype(np.uint8)
+        else:
+            grid_image_all = grid_image_all.astype(np.uint8)
         writer.append_data(grid_image_all[:,:,[2,1,0]])
 
     print(f'-- please check the teaser figure in {savefolder}')
@@ -118,8 +133,16 @@ if __name__ == '__main__':
                         help='path to expression')
     parser.add_argument('-s', '--savefolder', default='TestSamples/teaser/results', type=str,
                         help='path to the output directory, where results(obj, txt files) will be stored.')
-    parser.add_argument('--device', default='cuda', type=str,
-                        help='set device, cpu for using cpu' )
+    
+    if torch.cuda.is_available():
+        default_device = 'cuda'
+    elif torch.backends.mps.is_available():
+        default_device = 'mps'
+    else:
+        default_device = 'cpu'
+
+    parser.add_argument('--device', default=default_device, type=str,
+                        help='set device, cpu for using cpu, mps for macOS' )
     # rendering option
     parser.add_argument('--rasterizer_type', default='standard', type=str,
                         help='rasterizer type: pytorch3d or standard' )

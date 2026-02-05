@@ -13,6 +13,15 @@
 # For comments or questions, please email us at deca@tue.mpg.de
 # For commercial licensing contact, please contact ps-license@tuebingen.mpg.de
 
+"""
+This script performs 3D face reconstruction from a single image, a folder of images, or a video using DECA.
+It produces:
+1. Coarse and detailed 3D face geometry (shape and expression).
+2. Optional UV texture (either from FLAME texture model or extracted from input).
+3. Visualizations including rendered shape, normal maps, and landmark alignments.
+4. Exportable results in various formats (.obj, .mat, .txt keypoints, depth images).
+"""
+
 import os, sys
 import cv2
 import numpy as np
@@ -37,27 +46,53 @@ def main(args):
     os.makedirs(savefolder, exist_ok=True)
 
     # load test images 
-    testdata = datasets.TestData(args.inputpath, iscrop=args.iscrop, face_detector=args.detector, sample_step=args.sample_step)
+    testdata = datasets.TestData(args.inputpath, iscrop=args.iscrop, face_detector=args.detector, sample_step=args.sample_step, device=device)
 
     # run DECA
     deca_cfg.model.use_tex = args.useTex
     deca_cfg.rasterizer_type = args.rasterizer_type
     deca_cfg.model.extract_tex = args.extractTex
     deca = DECA(config = deca_cfg, device=device)
+
+    # Timing accumulation
+    times = {
+        'data': [],
+        'encode': [],
+        'decode': [],
+        'decode_orig': [],
+        'save': []
+    }
+
     # for i in range(len(testdata)):
     for i in tqdm(range(len(testdata))):
+        t_step_start = time()
         name = testdata[i]['imagename']
         images = testdata[i]['image'].to(device)[None,...]
+        t_data = time() - t_step_start
+        times['data'].append(t_data)
+
         with torch.no_grad():
+            t_encode_start = time()
             codedict = deca.encode(images)
+            t_encode = time() - t_encode_start
+            times['encode'].append(t_encode)
+
+            t_decode_start = time()
             opdict, visdict = deca.decode(codedict) #tensor
+            t_decode = time() - t_decode_start
+            times['decode'].append(t_decode)
+
             if args.render_orig:
                 tform = testdata[i]['tform'][None, ...]
                 tform = torch.inverse(tform).transpose(1,2).to(device)
                 original_image = testdata[i]['original_image'][None, ...].to(device)
+                t_decode_orig_start = time()
                 _, orig_visdict = deca.decode(codedict, render_orig=True, original_image=original_image, tform=tform)    
+                t_decode_orig = time() - t_decode_orig_start
+                times['decode_orig'].append(t_decode_orig)
                 orig_visdict['inputs'] = original_image            
 
+        t_save_start = time()
         if args.saveDepth or args.saveKpt or args.saveObj or args.saveMat or args.saveImages:
             os.makedirs(os.path.join(savefolder, name), exist_ok=True)
         # -- save results
@@ -86,6 +121,13 @@ def main(args):
                 if args.render_orig:
                     image = util.tensor2image(orig_visdict[vis_name][0])
                     cv2.imwrite(os.path.join(savefolder, name, 'orig_' + name + '_' + vis_name +'.jpg'), util.tensor2image(orig_visdict[vis_name][0]))
+        t_save = time() - t_save_start
+        times['save'].append(t_save)
+
+    print(f'-- Average timings:')
+    for k, v in times.items():
+        if len(v) > 0:
+            print(f'{k}: {np.mean(v):.3f}s')
     print(f'-- please check the results in {savefolder}')
         
 if __name__ == '__main__':
@@ -95,8 +137,8 @@ if __name__ == '__main__':
                         help='path to the test data, can be image folder, image path, image list, video')
     parser.add_argument('-s', '--savefolder', default='TestSamples/examples/results', type=str,
                         help='path to the output directory, where results(obj, txt files) will be stored.')
-    parser.add_argument('--device', default='cuda', type=str,
-                        help='set device, cpu for using cpu' )
+    parser.add_argument('--device', default='mps' if torch.backends.mps.is_available() else 'cuda' if torch.cuda.is_available() else 'cpu', type=str,
+                        help='set device: mps, cuda, or cpu' )
     # process test images
     parser.add_argument('--iscrop', default=True, type=lambda x: x.lower() in ['true', '1'],
                         help='whether to crop input image, set false only when the test image are well cropped' )
