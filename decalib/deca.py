@@ -114,8 +114,17 @@ class DECA(nn.Module):
         return code_dict
 
     def displacement2normal(self, uv_z, coarse_verts, coarse_normals):
-        ''' Convert displacement map into detail normal map
-        '''
+        """
+        Convert displacement map into detail normal map
+
+        Args:
+            uv_z (torch.Tensor): Displacement map
+            coarse_verts (torch.Tensor): Coarse vertices
+            coarse_normals (torch.Tensor): Coarse normals
+
+        Returns:
+            torch.Tensor: Detail normals
+        """
         batch_size = uv_z.shape[0]
         uv_coarse_vertices = self.render.world2uv(coarse_verts).detach()
         uv_coarse_normals = self.render.world2uv(coarse_normals).detach()
@@ -131,8 +140,15 @@ class DECA(nn.Module):
         return uv_detail_normals
 
     def visofp(self, normals):
-        ''' visibility of keypoints, based on the normal direction
-        '''
+        """
+        visibility of keypoints, based on the normal direction
+
+        Args:
+            normals (torch.Tensor): Normals
+
+        Returns:
+            torch.Tensor: Visibility of keypoints
+        """
         normals68 = self.flame.seletec_3d68(normals)
         vis68 = (normals68[:,:,2:] < 0.1).float()
         return vis68
@@ -195,8 +211,9 @@ class DECA(nn.Module):
         landmarks2d = util.batch_orth_proj(landmarks2d, canonical_cam)[:,:,:2]
         landmarks3d = util.batch_orth_proj(landmarks3d, canonical_cam)
 
-        # Standardize projections: flip Y so Forehead is at NDC -1 (Top)
-        # And flip Z to ensure front of head is closer to camera (standard depth)
+        # Standardize projections: 
+        # Flip Y so Forehead is at NDC -1 (Top)
+        # Flip Z to ensure front of head is closer to camera (standard depth)
         trans_verts[:,:,1] = -trans_verts[:,:,1]
         trans_verts[:,:,2] = -trans_verts[:,:,2]
         landmarks2d[:,:,1] = -landmarks2d[:,:,1]
@@ -232,6 +249,7 @@ class DECA(nn.Module):
             opdict['rendered_images'] = ops['images']
             opdict['alpha_images'] = ops['alpha_images']
             opdict['normal_images'] = ops['normal_images']
+        opdict['normals'] = ops['normals']
         
         if self.cfg.model.use_tex:
             opdict['albedo'] = albedo
@@ -261,10 +279,13 @@ class DECA(nn.Module):
         if return_vis:
             ## render shape
             shape_images, _, grid, alpha_images = self.render.render_shape(verts, trans_verts, h=h, w=w, images=background, return_grid=True)
-            detail_normal_images = F.grid_sample(uv_detail_normals, grid, align_corners=False)
-            # Normalize sampled normals to ensure unit length for shading
-            detail_normal_images = F.normalize(detail_normal_images, dim=1) * alpha_images
-            shape_detail_images = self.render.render_shape(verts, trans_verts, detail_normal_images=detail_normal_images, h=h, w=w, images=background)
+            if use_detail:
+                detail_normal_images = F.grid_sample(uv_detail_normals, grid, align_corners=False)
+                # Normalize sampled normals to ensure unit length for shading
+                detail_normal_images = F.normalize(detail_normal_images, dim=1) * alpha_images
+                shape_detail_images = self.render.render_shape(verts, trans_verts, detail_normal_images=detail_normal_images, h=h, w=w, images=background)
+            else:
+                shape_detail_images = shape_images
             depth_images = self.render.render_depth(trans_verts).repeat(1,3,1,1)
 
             ## extract texture
@@ -279,9 +300,15 @@ class DECA(nn.Module):
             if self.cfg.model.use_tex:
                 ## TODO: poisson blending should give better-looking results
                 if self.cfg.model.extract_tex:
-                    uv_texture_gt = uv_gt[:,:3,:,:]*self.uv_face_eye_mask + (uv_texture[:,:3,:,:]*(1-self.uv_face_eye_mask))
+                    if use_detail:
+                        uv_texture_gt = uv_gt[:,:3,:,:]*self.uv_face_eye_mask + (uv_texture[:,:3,:,:]*(1-self.uv_face_eye_mask))
+                    else:
+                        uv_texture_gt = uv_gt[:,:3,:,:]*self.uv_face_eye_mask + (albedo[:,:3,:,:]*(1-self.uv_face_eye_mask))
                 else:
-                    uv_texture_gt = uv_texture[:,:3,:,:]
+                    if use_detail:
+                        uv_texture_gt = uv_texture[:,:3,:,:]
+                    else:
+                        uv_texture_gt = albedo[:,:3,:,:]
             else:
                 uv_texture_gt = uv_gt[:,:3,:,:]*self.uv_face_eye_mask + (torch.ones_like(uv_gt[:,:3,:,:])*(1-self.uv_face_eye_mask)*0.7)
             

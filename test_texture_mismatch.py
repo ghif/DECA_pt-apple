@@ -20,7 +20,8 @@ deca = DECA(config=deca_cfg, device=device)
 
 # Load image
 # Trying the path from original script, then falling back
-imagepath = 'TestSamples/examples/IMG_0392_inputs.jpg'
+# imagepath = 'TestSamples/examples/IMG_0392_inputs.jpg'
+imagepath = 'TestSamples/examples/ghif_face1.jpg'
 if not os.path.exists(imagepath):
     imagepath = 'TestSamples/examples/IMG_0392.jpg'
     if not os.path.exists(imagepath):
@@ -63,7 +64,7 @@ if 'depth_images' not in visdict:
     visdict['depth_images'] = depth_image
 
 # Save results
-os.makedirs('debug_output', exist_ok=True)
+os.makedirs('debug_output_ghif', exist_ok=True)
 
 # Save 6 panels
 panels = {
@@ -79,12 +80,9 @@ panels = {
 
 for name, key in panels.items():
     if key in visdict:
-        cv2.imwrite(f'debug_output/{name}.jpg', util.tensor2image(visdict[key][0]))
+        cv2.imwrite(f'debug_output_ghif/{name}.jpg', util.tensor2image(visdict[key][0]))
     else:
         print(f"Warning: {key} not found in visdict.")
-
-# Display FLAME albode for debugging
-cv2.imwrite(f"debug_output/albedo.jpg", util.tensor2image(opdict['albedo'][0])) 
 
 # # Normals were already moved to visdict and mapped to [0,1] in deca.py
 # if 'uv_detail_normals' in visdict:
@@ -92,7 +90,7 @@ cv2.imwrite(f"debug_output/albedo.jpg", util.tensor2image(opdict['albedo'][0]))
 # else:
 #     print("Warning: uv_detail_normals not found in visdict.")
 
-print("Saved 8 panel images to debug_output/")
+print("Saved 8 panel images to debug_output_ghif/")
 
 # if __name__ == '__main__':
 #     main()

@@ -12,6 +12,8 @@ This is a **fork** of the official DECA implementation, refactored to run native
 *   **CUDA-Free:** All custom CUDA kernels have been replaced with high-performance C++ CPU fallbacks.
 *   **PyTorch3D-Free:** Removed dependencies on the heavy PyTorch3D library, using a custom standard rasterizer instead.
 *   **Modern Python:** Updated for Python 3.13 compatibility.
+*   **Complete Coordinate Standardization:** Synchronized all components to NDC Y=-1 = Top (PyTorch convention), ensuring robust alignment for detailed renderings and face landmarks.
+*   **Deep Dive Article:** Check out [blog.md](file:///Users/mghifary/Work/Code/AI/DECA/blog.md) for a detailed look at the 3D reconstruction math and inference process.
 
 DECA reconstructs a 3D head model with detailed facial geometry from a single input image. The resulting 3D head model can be easily animated. Please refer to the [original arXiv paper](https://arxiv.org/abs/2012.04012) for more details.
 

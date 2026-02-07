@@ -50,15 +50,21 @@ def main(args):
     expdata = datasets.TestData(args.exp_path, iscrop=args.iscrop, face_detector=args.detector, device=device)
     # DECA
     deca_cfg.rasterizer_type = args.rasterizer_type
+    deca_cfg.model.use_tex = True
+    deca_cfg.model.extract_tex = True
     deca = DECA(config=deca_cfg, device=device)
 
     visdict_list_list = []
     for i in range(len(testdata)):
         name = testdata[i]['imagename']
+        print(f"Processing {name}...")
         images = testdata[i]['image'].to(device)[None,...]
         with torch.no_grad():
             codedict = deca.encode(images)
             opdict, visdict = deca.decode(codedict) #tensor
+            # Extract texture once to use for all animation frames (so it "sticks")
+            uv_texture_gt = opdict['uv_texture_gt']
+            h, w = images.shape[2:]
         ### show shape with different views and expressions
         visdict_list = []
         max_yaw = 30
@@ -73,10 +79,18 @@ def main(args):
             codedict['pose'][:,:3] = global_pose
             codedict['cam'][:,:] = 0.
             codedict['cam'][:,0] = 8
-            _, visdict_view = deca.decode(codedict)   
-            visdict = {x:visdict[x] for x in ['inputs', 'shape_detail_images']}         
-            visdict['pose'] = visdict_view['shape_detail_images']
-            visdict_list.append(visdict)
+            opdict_view, visdict_view = deca.decode(codedict)   
+            # Manually render with the FIXED texture to ensure it follows animation
+            render_ops = deca.render(opdict_view['verts'], opdict_view['trans_verts'], uv_texture_gt, h=h, w=w)
+            
+            frame_visdict = {
+                'inputs': images, 
+                'shape': visdict['shape_detail_images'],
+                'rendered': visdict['rendered_images'],
+                'pose': visdict_view['shape_detail_images'],
+                'rendered_pose': render_ops['images']
+            }         
+            visdict_list.append(frame_visdict)
 
         euler_pose = torch.zeros((1, 3))
         global_pose = batch_euler2axis(deg2rad(euler_pose[:,:3].to(device))) 
@@ -89,8 +103,12 @@ def main(args):
             euler_pose[:,2] = 0#(torch.rand((self.batch_size))*60 - 30)*(2./euler_pose[:,1].abs())
             jaw_pose = batch_euler2axis(deg2rad(euler_pose[:,:3].to(device))) 
             codedict['pose'][:,3:] = jaw_pose
-            _, visdict_view = deca.decode(codedict)     
+            opdict_view, visdict_view = deca.decode(codedict)     
+            # Manually render with the FIXED texture
+            render_ops = deca.render(opdict_view['verts'], opdict_view['trans_verts'], uv_texture_gt, h=h, w=w)
+
             visdict_list[i]['exp'] = visdict_view['shape_detail_images']
+            visdict_list[i]['rendered_exp'] = render_ops['images']
             count = i
 
         for (i,k) in enumerate(range(len(expdata))): #jaw angle from -50 to 50        
@@ -100,8 +118,13 @@ def main(args):
             # transfer exp code
             codedict['pose'][:,3:] = exp_codedict['pose'][:,3:]
             codedict['exp'] = exp_codedict['exp']
-            _, exp_visdict = deca.decode(codedict)
-            visdict_list[i+count]['exp'] = exp_visdict['shape_detail_images']
+            opdict_exp, exp_visdict = deca.decode(codedict)
+            # Manually render with the FIXED texture
+            render_ops = deca.render(opdict_exp['verts'], opdict_exp['trans_verts'], uv_texture_gt, h=h, w=w)
+
+            if i+count+1 < len(visdict_list):
+                visdict_list[i+count+1]['exp'] = exp_visdict['shape_detail_images']
+                visdict_list[i+count+1]['rendered_exp'] = render_ops['images']
 
         visdict_list_list.append(visdict_list)
     
