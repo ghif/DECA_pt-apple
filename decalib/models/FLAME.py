@@ -229,7 +229,7 @@ class FLAMETex(nn.Module):
             pc_key = 'PC'
             n_pc = 199
             tex_path = config.tex_path
-            tex_space = np.load(tex_path)
+            tex_space = np.load(tex_path, allow_pickle=True)
             texture_mean = tex_space[mu_key].reshape(1, -1)
             texture_basis = tex_space[pc_key].reshape(-1, n_pc)
 
@@ -238,7 +238,7 @@ class FLAMETex(nn.Module):
             pc_key = 'tex_dir'
             n_pc = 200
             tex_path = config.flame_tex_path
-            tex_space = np.load(tex_path)
+            tex_space = np.load(tex_path, allow_pickle=True)
             texture_mean = tex_space[mu_key].reshape(1, -1)/255.
             texture_basis = tex_space[pc_key].reshape(-1, n_pc)/255.
         else:

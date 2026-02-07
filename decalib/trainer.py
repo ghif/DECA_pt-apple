@@ -42,12 +42,21 @@ from .utils import lossfunc
 from .datasets import build_datasets
 
 class Trainer(object):
-    def __init__(self, model, config=None, device='cuda:0' if torch.cuda.is_available() else 'cpu'):
+    def __init__(self, model, config=None, device=None):
         if config is None:
             self.cfg = cfg
         else:
             self.cfg = config
-        self.device = device
+        
+        if device is None:
+            if torch.cuda.is_available():
+                self.device = 'cuda:0'
+            elif torch.backends.mps.is_available():
+                self.device = 'mps'
+            else:
+                self.device = 'cpu'
+        else:
+            self.device = device
         self.batch_size = self.cfg.dataset.batch_size
         self.image_size = self.cfg.dataset.image_size
         self.uv_size = self.cfg.model.uv_size

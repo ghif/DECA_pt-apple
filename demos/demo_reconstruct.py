@@ -95,11 +95,16 @@ def main(args):
         t_save_start = time()
         if args.saveDepth or args.saveKpt or args.saveObj or args.saveMat or args.saveImages:
             os.makedirs(os.path.join(savefolder, name), exist_ok=True)
-        # -- save results
-        if args.saveDepth:
+        
+        # -- compute depth for saving or visualization
+        if args.saveDepth or args.saveVis:
             depth_image = deca.render.render_depth(opdict['trans_verts']).repeat(1,3,1,1)
             visdict['depth_images'] = depth_image
-            cv2.imwrite(os.path.join(savefolder, name, name + '_depth.jpg'), util.tensor2image(depth_image[0]))
+            # depth_image = visdict['depth_images']
+            if args.saveDepth:
+                cv2.imwrite(os.path.join(savefolder, name, name + '_depth.jpg'), util.tensor2image(depth_image[0]))
+
+        # -- save results
         if args.saveKpt:
             np.savetxt(os.path.join(savefolder, name, name + '_kpt2d.txt'), opdict['landmarks2d'][0].cpu().numpy())
             np.savetxt(os.path.join(savefolder, name, name + '_kpt3d.txt'), opdict['landmarks3d'][0].cpu().numpy())
@@ -109,9 +114,34 @@ def main(args):
             opdict = util.dict_tensor2npy(opdict)
             savemat(os.path.join(savefolder, name, name + '.mat'), opdict)
         if args.saveVis:
-            cv2.imwrite(os.path.join(savefolder, name + '_vis.jpg'), deca.visualize(visdict))
+            # Reconstruct visdict to match the exact order of the 6-panel reference
+            # Panel order: [Input, Landmarks2D, Landmarks3D, Shape, Detail, Depth]
+            ref_visdict = {
+                'inputs': visdict['inputs'],
+                'landmarks2d': visdict['landmarks2d'],
+                'landmarks3d': visdict['landmarks3d'],
+                'shape_images': visdict['shape_images'],
+                'shape_detail_images': visdict['shape_detail_images'],
+                'depth_images': visdict['depth_images'],
+                'rendered_images': visdict['rendered_images'],
+            }
+            cv2.imwrite(os.path.join(savefolder, name + '_vis.jpg'), deca.visualize(ref_visdict))
             if args.render_orig:
-                cv2.imwrite(os.path.join(savefolder, name + '_vis_original_size.jpg'), deca.visualize(orig_visdict))
+                # Same for original size grid
+                ref_orig_visdict = {
+                    'inputs': original_image,
+                    'landmarks2d': orig_visdict['landmarks2d'],
+                    'landmarks3d': orig_visdict['landmarks3d'],
+                    'shape_images': orig_visdict['shape_images'],
+                    'shape_detail_images': orig_visdict['shape_detail_images'],
+                    'depth_images': depth_image, # Depth was already computed in original space if render_orig was handled?
+                    'rendered_images': orig_visdict['rendered_images'],
+                    # Wait, if render_orig is True, trans_verts is in original space. 
+                    # So depth_image computed above is in original space!
+                }
+                # However, depth_image needs to be re-rendered for original space if trans_verts was modified
+                # But trans_verts in opdict was modified in place in deca.py!
+                cv2.imwrite(os.path.join(savefolder, name + '_vis_original_size.jpg'), deca.visualize(ref_orig_visdict))
         if args.saveImages:
             for vis_name in ['inputs', 'rendered_images', 'albedo_images', 'shape_images', 'shape_detail_images', 'landmarks2d']:
                 if vis_name not in visdict.keys():
@@ -155,19 +185,19 @@ if __name__ == '__main__':
     parser.add_argument('--useTex', default=False, type=lambda x: x.lower() in ['true', '1'],
                         help='whether to use FLAME texture model to generate uv texture map, \
                             set it to True only if you downloaded texture model' )
-    parser.add_argument('--extractTex', default=True, type=lambda x: x.lower() in ['true', '1'],
+    parser.add_argument('--extractTex', default=False, type=lambda x: x.lower() in ['true', '1'],
                         help='whether to extract texture from input image as the uv texture map, set false if you want albeo map from FLAME mode' )
     parser.add_argument('--saveVis', default=True, type=lambda x: x.lower() in ['true', '1'],
                         help='whether to save visualization of output' )
-    parser.add_argument('--saveKpt', default=False, type=lambda x: x.lower() in ['true', '1'],
+    parser.add_argument('--saveKpt', default=True, type=lambda x: x.lower() in ['true', '1'],
                         help='whether to save 2D and 3D keypoints' )
-    parser.add_argument('--saveDepth', default=False, type=lambda x: x.lower() in ['true', '1'],
+    parser.add_argument('--saveDepth', default=True, type=lambda x: x.lower() in ['true', '1'],
                         help='whether to save depth image' )
-    parser.add_argument('--saveObj', default=False, type=lambda x: x.lower() in ['true', '1'],
+    parser.add_argument('--saveObj', default=True, type=lambda x: x.lower() in ['true', '1'],
                         help='whether to save outputs as .obj, detail mesh will end with _detail.obj. \
                             Note that saving objs could be slow' )
     parser.add_argument('--saveMat', default=False, type=lambda x: x.lower() in ['true', '1'],
                         help='whether to save outputs as .mat' )
-    parser.add_argument('--saveImages', default=False, type=lambda x: x.lower() in ['true', '1'],
+    parser.add_argument('--saveImages', default=True, type=lambda x: x.lower() in ['true', '1'],
                         help='whether to save visualization output as seperate images' )
     main(parser.parse_args())

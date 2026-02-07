@@ -647,7 +647,7 @@ def tensor_vis_landmarks(images, landmarks, gt_landmarks=None, color = 'g', isSc
         if predicted_landmark.shape[0] == 68:
             image_landmarks = plot_kpts(image, predicted_landmark, color)
             if gt_landmarks is not None:
-                image_landmarks = plot_verts(image_landmarks, gt_landmarks_np[i]*image.shape[0]/2 + image.shape[0]/2, 'r')
+                image_landmarks = plot_verts(image_landmarks, gt_landmarks_np[i]*image.shape[0]/2 + image.shape[0]/2, 'r') # This one might also need fix if used
         else:
             image_landmarks = plot_verts(image, predicted_landmark, color)
             if gt_landmarks is not None:

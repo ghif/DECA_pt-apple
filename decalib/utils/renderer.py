@@ -112,25 +112,15 @@ class StandardRasterizer(nn.Module):
         
         # Clone vertices to avoid modifying original
         vertices = vertices.clone().float()
-        
-        # Compatible with pytorch3d ndc
-        # NDC Range [-1, 1] -> Screen Coordinates
-        vertices[...,:2] = -vertices[...,:2]
-        vertices[...,0] = vertices[..., 0]*w/2 + w/2
-        vertices[...,1] = vertices[..., 1]*h/2 + h/2
-        vertices[...,0] = w - 1 - vertices[..., 0]
-        vertices[...,1] = h - 1 - vertices[..., 1]
-        vertices[...,0] = -1 + (2*vertices[...,0] + 1)/w
-        vertices[...,1] = -1 + (2*vertices[...,1] + 1)/h
-        
-        vertices = vertices.clone().float()
-        vertices[...,0] = vertices[..., 0]*w/2 + w/2 
-        vertices[...,1] = vertices[..., 1]*h/2 + h/2 
-        vertices[...,2] = vertices[..., 2]*w/2
+        # Standard NDC: Y=-1 is Top (Pixel 0), Y=1 is Bottom (Pixel h)
+        vertices[..., 0] = vertices[..., 0] * w / 2 + w / 2
+        vertices[..., 1] = vertices[..., 1] * h / 2 + h / 2
+        # Scale Z similarly if needed by C++ (original code scaled Z by w/2)
+        vertices[..., 2] = vertices[..., 2] * w / 2
         
         f_vs = util.face_vertices(vertices, faces)
-
-        # Call the wrapper (which handles CPU offloading)
+        
+                # Call the wrapper (which handles CPU offloading)
         if standard_rasterize is None:
              raise RuntimeError("Rasterizer not initialized. Please call set_rasterizer() first.")
              
@@ -175,20 +165,25 @@ class SRenderY(nn.Module):
 
         # faces
         dense_triangles = util.generate_triangles(uv_size, uv_size)
+        # faces
+        dense_triangles = util.generate_triangles(uv_size, uv_size)
         self.register_buffer('dense_faces', torch.from_numpy(dense_triangles).long()[None,:,:])
         self.register_buffer('faces', faces)
         self.register_buffer('raw_uvcoords', uvcoords)
 
         # uv coords
         uvcoords = torch.cat([uvcoords, uvcoords[:,:,0:1]*0.+1.], -1) #[bz, ntv, 3]
-        uvcoords = uvcoords*2 - 1; uvcoords[...,1] = -uvcoords[...,1]
-        face_uvcoords = util.face_vertices(uvcoords, uvfaces)
+        uvcoords = uvcoords*2 - 1
+        # Flip Y so Forehead (high origin V) becomes NDC Y=-1 (Top)
+        uvcoords[..., 1] = -uvcoords[..., 1]
         self.register_buffer('uvcoords', uvcoords)
         self.register_buffer('uvfaces', uvfaces)
+        
+        face_uvcoords = util.face_vertices(self.uvcoords, self.uvfaces)
         self.register_buffer('face_uvcoords', face_uvcoords)
 
         # shape colors, for rendering shape overlay
-        colors = torch.tensor([180, 180, 180])[None, None, :].repeat(1, faces.max()+1, 1).float()/255.
+        colors = torch.tensor([112, 112, 112])[None, None, :].repeat(1, faces.max()+1, 1).float()/255.
         face_colors = util.face_vertices(colors, faces)
         self.register_buffer('face_colors', face_colors)
 
@@ -212,7 +207,9 @@ class SRenderY(nn.Module):
             point or directional
         '''
         batch_size = vertices.shape[0]
-        ## rasterizer near 0 far 100. move mesh so minz larger than 0
+        # Move mesh so minz larger than 0 for rasterizer (near 0, far 100)
+        # Avoid in-place modification to prevent shifts in subsequent calls
+        transformed_vertices = transformed_vertices.clone()
         transformed_vertices[:,:,2] = transformed_vertices[:,:,2] + 10
         # attributes
         face_vertices = util.face_vertices(vertices, self.faces.expand(batch_size, -1, -1))
@@ -237,7 +234,7 @@ class SRenderY(nn.Module):
 
         # visible mask for pixels with positive normal direction
         transformed_normal_map = rendering[:, 3:6, :, :].detach()
-        pos_mask = (transformed_normal_map[:, 2:, :, :] < -0.05).float()
+        pos_mask = (transformed_normal_map[:, 2:, :, :] > 0.05).float()
 
         # shading
         normal_images = rendering[:, 9:12, :, :]
@@ -332,15 +329,13 @@ class SRenderY(nn.Module):
         if lights is None:
             light_positions = torch.tensor(
                 [
-                [-1,1,1],
-                [1,1,1],
-                [-1,-1,1],
-                [1,-1,1],
                 [0,0,1]
                 ]
             )[None,:,:].expand(batch_size, -1, -1).float()
-            light_intensities = torch.ones_like(light_positions).float()*1.7
+            light_intensities = torch.ones_like(light_positions).float()*2.0
             lights = torch.cat((light_positions, light_intensities), 2).to(vertices.device)
+        # Avoid in-place modification
+        transformed_vertices = transformed_vertices.clone()
         transformed_vertices[:,:,2] = transformed_vertices[:,:,2] + 10
 
         # Attributes
@@ -366,7 +361,7 @@ class SRenderY(nn.Module):
         albedo_images = rendering[:, :3, :, :]
         # mask
         transformed_normal_map = rendering[:, 3:6, :, :].detach()
-        pos_mask = (transformed_normal_map[:, 2:, :, :] < 0.15).float()
+        pos_mask = (transformed_normal_map[:, 2:, :, :] < -0.05).float()
 
         # shading
         normal_images = rendering[:, 9:12, :, :].detach()
@@ -374,8 +369,11 @@ class SRenderY(nn.Module):
         if detail_normal_images is not None:
             normal_images = detail_normal_images
 
-        shading = self.add_directionlight(normal_images.permute(0,2,3,1).reshape([batch_size, -1, 3]), lights)
-        shading_images = shading.reshape([batch_size, albedo_images.shape[2], albedo_images.shape[3], 3]).permute(0,3,1,2).contiguous()        
+        if lights is not None and lights.shape[1] == 9:
+            shading_images = self.add_SHlight(normal_images, lights)
+        else:
+            shading = self.add_directionlight(normal_images.permute(0,2,3,1).reshape([batch_size, -1, 3]), lights)
+            shading_images = shading.reshape([batch_size, albedo_images.shape[2], albedo_images.shape[3], 3]).permute(0,3,1,2).contiguous()        
         shaded_images = albedo_images*shading_images
 
         alpha_images = alpha_images*pos_mask
@@ -396,6 +394,8 @@ class SRenderY(nn.Module):
         '''
         batch_size = transformed_vertices.shape[0]
 
+        # Avoid in-place modification
+        transformed_vertices = transformed_vertices.clone()
         transformed_vertices[:,:,2] = transformed_vertices[:,:,2] - transformed_vertices[:,:,2].min()
         z = -transformed_vertices[:,:,2:].repeat(1,1,3).clone()
         z = z-z.min()

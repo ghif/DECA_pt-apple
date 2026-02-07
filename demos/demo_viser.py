@@ -15,13 +15,7 @@
 
 """
 This script provides an interactive 3D visualization of DECA reconstructions using the `viser` library.
-Users can:
-1. Load a face image and reconstruct the 3D face.
-2. Interactively modify expression parameters (jaw pose, expression coefficients) via a web-based GUI.
-3. View the updated 3D face mesh in real-time.
-
-Usage:
-    python demos/demo_viser.py -i <path_to_image>
+Users can dial the shape and expressions of the 3D FLAME 2023 model.
 """
 
 import os, sys
@@ -35,13 +29,13 @@ import trimesh
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from decalib.deca import DECA
-from decalib.datasets import datasets 
+from decalib.datasets.datasets import TestData
 from decalib.utils import util
 from decalib.utils.rotation_converter import batch_euler2axis, deg2rad
 from decalib.utils.config import cfg as deca_cfg
 
 def main(args):
-    # 1. Setup Viser Server first for fast perceived startup
+    # 1. Setup Viser Server
     server = viser.ViserServer()
     server.scene.set_up_direction((0, 1, 0)) # FLAME up direction is Y
     
@@ -56,112 +50,127 @@ def main(args):
     device = args.device
     use_detail = (args.mode == 'detail')
     
-    # 2. Setup DECA (slow)
+    # 2. Setup DECA
     deca_cfg.model.use_tex = args.useTex
     deca_cfg.rasterizer_type = args.rasterizer_type
     deca_cfg.model.extract_tex = True
     deca = DECA(config=deca_cfg, device=device, use_detail=use_detail)
 
     # 3. Load Input Image
-    testdata = datasets.TestData(args.inputpath, iscrop=args.iscrop, face_detector=args.detector, device=device)
+    testdata = TestData(args.inputpath, iscrop=args.iscrop, face_detector=args.detector, device=device)
     if len(testdata) == 0:
         print(f"No images found in {args.inputpath}")
         return
 
     # Use the first image for visualization
     i = 0
-    name = testdata[i]['imagename']
     images = testdata[i]['image'].to(device)[None,...]
-    original_image_path = testdata.imagepath_list[i]
-    print(f"Loaded image: {original_image_path}")
+    print(f"Loaded image: {testdata.imagepath_list[i]}")
 
-    # 4. Initial Fast Reconstruction (coarse only)
+    # 4. Initial Fast Reconstruction
     with torch.no_grad():
         codedict = deca.encode(images, use_detail=use_detail)
+        # Note: we need the full opdict for initial faces/template
         opdict = deca.decode(codedict, return_vis=False, use_detail=use_detail)
 
-    # Extract initial parameters
-    # shape: [1, 100], exp: [1, 50], pose: [1, 6] (3 global + 3 jaw)
-    initial_exp = codedict['exp'].clone()
-    initial_pose = codedict['pose'].clone()
-    
-    # Get faces and template for detailed mesh rendering
-    faces = deca.render.faces[0].cpu().numpy()
-    dense_template = getattr(deca, 'dense_template', None)
-    
-    # Lazy texture loading
-    texture = None 
+    # Extract initial parameters for state initialization
+    predicted_shape = codedict['shape'].clone()
+    predicted_exp = codedict['exp'].clone()
+    predicted_pose = codedict['pose'].clone()
+    predicted_cam = codedict['cam'].clone()
 
     # State for controls
     state = {
-        "jaw_open": 0.0,
-        "exp_coeffs": [0.0] * 10, # Control first 10 expression coefficients
-        "global_rot": [0.0, 0.0, 0.0], # Pitch, Yaw, Roll
-        "show_detail": False # Default to False for faster initial render
+        "shape_coeffs": [predicted_shape[0, i].item() for i in range(predicted_shape.shape[1])],
+        "exp_coeffs": [predicted_exp[0, i].item() for i in range(predicted_exp.shape[1])],
+        "global_rot": [predicted_pose[0, i].item() for i in range(3)], # Axis-angle
+        "jaw_pose": [predicted_pose[0, i].item() for i in range(3, 6)], # Axis-angle
+        "cam": [predicted_cam[0, i].item() for i in range(3)], # s, tx, ty
+        "show_detail": False,
+        "use_projection": False 
     }
+
+    # Shared variables for update_mesh
+    faces = deca.render.faces[0].cpu().numpy()
+    dense_template = getattr(deca, 'dense_template', None)
+    texture = None 
 
     def update_mesh():
         nonlocal texture
-        # Update codedict based on state
+        print("Updating mesh...")
         with torch.no_grad():
+            # 0. Update Shape
+            new_shape = predicted_shape.clone()
+            for idx, val in enumerate(state["shape_coeffs"]):
+                new_shape[:, idx] = val
+            codedict['shape'] = new_shape
+
             # 1. Update Expression
-            new_exp = initial_exp.clone()
+            new_exp = predicted_exp.clone()
             for idx, val in enumerate(state["exp_coeffs"]):
                 new_exp[:, idx] = val 
             codedict['exp'] = new_exp
             
-            # 2. Update Jaw Pose
-            euler_jaw = torch.zeros((1, 3)).to(device)
-            euler_jaw[:, 0] = state["jaw_open"] # Jaw open/close
-            jaw_pose = batch_euler2axis(deg2rad(euler_jaw))
-            codedict['pose'][:, 3:] = jaw_pose
+            # 2. Update Pose (Rotation + Jaw)
+            new_pose = predicted_pose.clone()
+            new_pose[0, :3] = torch.tensor(state["global_rot"]).to(device)
+            new_pose[0, 3:] = torch.tensor(state["jaw_pose"]).to(device)
+            codedict['pose'] = new_pose
             
-            # Decode to get new verts and displacement
-            # Note: return_vis=False is enough if we already have the texture
-            opdict = deca.decode(codedict, return_vis=False, use_detail=(use_detail and state["show_detail"]))
+            # 3. Update Camera (Scale + Translation)
+            new_cam = predicted_cam.clone()
+            new_cam[0, :] = torch.tensor(state["cam"]).to(device)
+            codedict['cam'] = new_cam
             
+            # 4. Decode
+            print("  - Decoding...")
+            current_opdict = deca.decode(codedict, return_vis=False, use_detail=(use_detail and state["show_detail"]))
+            
+            # 5. Handle fitted/projected view vs centered view
+            if state["use_projection"]:
+                s, tx, ty = state["cam"]
+                v = current_opdict['verts']
+                v_fitted = s * (v + torch.tensor([tx, ty, 0.0]).to(device).view(1, 1, 3))
+                display_verts = v_fitted[0].cpu().numpy()
+            else:
+                display_verts = current_opdict['verts'][0].cpu().numpy()
+
             if use_detail and state["show_detail"]:
-                # Lazy-load texture if needed
                 if texture is None:
-                    print("Extracting texture for detailed skin...")
+                    print("  - Extracting texture...")
                     loading_status.name = "Status: Extracting Texture..."
-                    with torch.no_grad():
-                        _, visdict = deca.decode(codedict, return_vis=True, use_detail=True)
-                        texture = util.tensor2image(visdict['uv_texture_gt'][0])
+                    _, visdict = deca.decode(codedict, return_vis=True, use_detail=True)
+                    texture = util.tensor2image(visdict['uv_texture_gt'][0])
                     loading_status.name = "Status: Ready"
 
-                # Upsample mesh for details
-                vertices = opdict['verts'][0].cpu().numpy()
-                normals = opdict['normals'][0].cpu().numpy()
-                displacement_map = opdict['displacement_map'][0].cpu().numpy().squeeze()
+                print("  - Upsampling mesh...")
+                normals = current_opdict['normals'][0].cpu().numpy()
+                displacement_map = current_opdict['displacement_map'][0].cpu().numpy().squeeze()
                 
                 dense_vertices, dense_colors, dense_faces = util.upsample_mesh(
-                    vertices, normals, faces, displacement_map, texture, dense_template
+                    current_opdict['verts'][0].cpu().numpy(), normals, faces, displacement_map, texture, dense_template
                 )
                 
-                # Update mesh in Viser using trimesh to support vertex colors
-                mesh = trimesh.Trimesh(
-                    vertices=dense_vertices,
-                    faces=dense_faces,
-                    vertex_colors=dense_colors
-                )
+                if state["use_projection"]:
+                    s, tx, ty = state["cam"]
+                    dense_vertices = s * (dense_vertices + np.array([tx, ty, 0.0]))
+
+                print("  - Adding detailed mesh to scene...")
                 server.scene.add_mesh_trimesh(
                     name="/face",
-                    mesh=mesh
+                    mesh=trimesh.Trimesh(vertices=dense_vertices, faces=dense_faces, vertex_colors=dense_colors)
                 )
             else:
-                # Show coarse mesh (no texture for simplicity if not detail)
-                verts = opdict['verts'][0].cpu().numpy()
-                mesh = trimesh.Trimesh(
-                    vertices=verts,
-                    faces=faces
-                )
+                print("  - Adding mesh to scene...")
                 server.scene.add_mesh_trimesh(
                     name="/face",
-                    mesh=mesh
+                    mesh=trimesh.Trimesh(vertices=display_verts, faces=faces)
                 )
+        print("Mesh update complete.")
 
-    # 5. Add GUI Controls
+    # 5. GUI Controls
+    loading_status.name = "Status: Ready"
+    
     with server.gui.add_folder("Display Controls"):
         if use_detail:
             detail_checkbox = server.gui.add_checkbox("Show Detail Skin", initial_value=False)
@@ -169,48 +178,119 @@ def main(args):
             def _(_):
                 state["show_detail"] = detail_checkbox.value
                 update_mesh()
-        else:
-            server.gui.add_button("Mode: Coarse Only", disabled=True)
-
-    with server.gui.add_folder("Expression Controls"):
-        # Jaw Control
-        jaw_slider = server.gui.add_slider(
-            "Jaw Open",
-            min=0.0,
-            max=60.0,
-            step=1.0,
-            initial_value=0.0
-        )
         
-        @jaw_slider.on_update
-        def _(_) -> None:
-            state["jaw_open"] = jaw_slider.value
+        proj_checkbox = server.gui.add_checkbox("Show Fitted (Projected)", initial_value=False)
+        @proj_checkbox.on_update
+        def _(_):
+            state["use_projection"] = proj_checkbox.value
             update_mesh()
 
-        # Expression Coefficients
-        exp_sliders = []
-        for i in range(10): # First 10 coeffs
+        reset_button = server.gui.add_button("Reset to Predicted")
+        @reset_button.on_click
+        def _(_):
+            # Restore state from predicted values
+            state["shape_coeffs"] = [predicted_shape[0, i].item() for i in range(predicted_shape.shape[1])]
+            state["exp_coeffs"] = [predicted_exp[0, i].item() for i in range(predicted_exp.shape[1])]
+            state["global_rot"] = [predicted_pose[0, i].item() for i in range(3)]
+            state["jaw_pose"] = [predicted_pose[0, i].item() for i in range(3, 6)]
+            state["cam"] = [predicted_cam[0, i].item() for i in range(3)]
+            
+            # Sync sliders
+            for i, slider in enumerate(shape_sliders):
+                slider.value = state["shape_coeffs"][i]
+            for i, slider in enumerate(exp_sliders):
+                slider.value = state["exp_coeffs"][i]
+            for i, slider in enumerate(rot_sliders):
+                slider.value = state["global_rot"][i]
+            for i, slider in enumerate(jaw_sliders):
+                slider.value = state["jaw_pose"][i]
+            for i, slider in enumerate(cam_sliders):
+                slider.value = state["cam"][i]
+
+            update_mesh()
+
+    with server.gui.add_folder("Global Rotation (Axis-Angle)"):
+        rot_labels = ["Rot X", "Rot Y", "Rot Z"]
+        rot_sliders = []
+        for i in range(3):
             slider = server.gui.add_slider(
-                f"Exp {i}",
-                min=-3.0,
-                max=3.0,
-                step=0.1,
-                initial_value=initial_exp[0, i].item()
+                rot_labels[i], min=-3.14, max=3.14, step=0.01, initial_value=state["global_rot"][i]
+            )
+            rot_sliders.append(slider)
+            def make_handler(idx):
+                def handler(_):
+                    state["global_rot"][idx] = rot_sliders[idx].value
+                    update_mesh()
+                return handler
+            slider.on_update(make_handler(i))
+
+    with server.gui.add_folder("Camera (Fitted Perspective)"):
+        cam_labels = ["Scale", "Trans X", "Trans Y"]
+        cam_mins = [0.1, -1.0, -1.0]
+        cam_maxs = [20.0, 1.0, 1.0]
+        cam_sliders = []
+        for i in range(3):
+            slider = server.gui.add_slider(
+                cam_labels[i], min=cam_mins[i], max=cam_maxs[i], step=0.01, initial_value=state["cam"][i]
+            )
+            cam_sliders.append(slider)
+            def make_cam_handler(idx):
+                def handler(_):
+                    state["cam"][idx] = cam_sliders[idx].value
+                    update_mesh()
+                return handler
+            slider.on_update(make_cam_handler(i))
+
+    with server.gui.add_folder("Jaw Rotation (Axis-Angle)"):
+        jaw_labels = ["Jaw X (Open)", "Jaw Y", "Jaw Z"]
+        jaw_sliders = []
+        for i in range(3):
+            slider = server.gui.add_slider(
+                jaw_labels[i], min=-0.5, max=1.5, step=0.01, initial_value=state["jaw_pose"][i]
+            )
+            jaw_sliders.append(slider)
+            def make_jaw_handler(idx):
+                def handler(_):
+                    state["jaw_pose"][idx] = jaw_sliders[idx].value
+                    update_mesh()
+                return handler
+            slider.on_update(make_jaw_handler(i))
+
+    with server.gui.add_folder("Expression Coefficients"):
+        exp_sliders = []
+        # Show first 50 coeffs to avoid overwhelming UI, but full state is used
+        num_exp_sliders = min(50, predicted_exp.shape[1])
+        for i in range(num_exp_sliders):
+            slider = server.gui.add_slider(
+                f"Exp {i}", min=-3.0, max=3.0, step=0.1, initial_value=state["exp_coeffs"][i]
             )
             exp_sliders.append(slider)
-            
-            def make_handler(idx):
-                def handler(_) -> None:
+            def make_exp_handler(idx):
+                def handler(_):
                     state["exp_coeffs"][idx] = exp_sliders[idx].value
                     update_mesh()
                 return handler
-            
-            slider.on_update(make_handler(i))
+            slider.on_update(make_exp_handler(i))
+
+    with server.gui.add_folder("Shape Coefficients"):
+        shape_sliders = []
+        # Show first 50 coeffs
+        num_shape_sliders = min(50, predicted_shape.shape[1])
+        for i in range(num_shape_sliders):
+            slider = server.gui.add_slider(
+                f"Shape {i}", min=-3.0, max=3.0, step=0.1, initial_value=state["shape_coeffs"][i]
+            )
+            shape_sliders.append(slider)
+            def make_shape_handler(idx):
+                def handler(_):
+                    state["shape_coeffs"][idx] = shape_sliders[idx].value
+                    update_mesh()
+                return handler
+            slider.on_update(make_shape_handler(i))
 
     # Initial Render
     update_mesh()
 
-    # Keep alive
     try:
         while True:
             time.sleep(1.0)
@@ -219,20 +299,11 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='DECA: Interactive Visualization with Viser')
-
-    parser.add_argument('-i', '--inputpath', default='TestSamples/examples/IMG_0392_inputs.jpg', type=str,
-                        help='path to the test data, can be image folder, image path, image list')
-    parser.add_argument('--mode', default='coarse', choices=['coarse', 'detail'], type=str,
-                        help='visualization mode: coarse (fast startup) or detail (with detailed skin support)')
-    parser.add_argument('--device', default='mps' if torch.backends.mps.is_available() else 'cuda' if torch.cuda.is_available() else 'cpu', type=str,
-                        help='set device: mps, cuda, or cpu' )
-    parser.add_argument('--rasterizer_type', default='standard', type=str,
-                        help='rasterizer type: pytorch3d or standard' )
-    parser.add_argument('--iscrop', default=True, type=lambda x: x.lower() in ['true', '1'],
-                        help='whether to crop input image, set false only when the test image are well cropped' )
-    parser.add_argument('--detector', default='fan', type=str,
-                        help='detector for cropping face, check decalib/detectors.py for details' )
-    parser.add_argument('--useTex', default=False, type=lambda x: x.lower() in ['true', '1'],
-                        help='whether to use FLAME texture model' )
-
+    parser.add_argument('-i', '--inputpath', default='TestSamples/examples/IMG_0392_inputs.jpg', type=str)
+    parser.add_argument('--mode', default='coarse', choices=['coarse', 'detail'], type=str)
+    parser.add_argument('--device', default='mps' if torch.backends.mps.is_available() else 'cuda' if torch.cuda.is_available() else 'cpu', type=str)
+    parser.add_argument('--rasterizer_type', default='standard', type=str)
+    parser.add_argument('--iscrop', default=True, type=lambda x: x.lower() in ['true', '1'])
+    parser.add_argument('--detector', default='fan', type=str)
+    parser.add_argument('--useTex', default=False, type=lambda x: x.lower() in ['true', '1'])
     main(parser.parse_args())
