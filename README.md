@@ -105,6 +105,10 @@ For visualization, we use a custom standard rasterizer that uses a C++ CPU exten
     python demos/demo_viser.py -i TestSamples/examples/ghif_face1.jpg
     ```
     Provides a real-time, web-based interactive dashboard to "dial" expressions, shape, and lighting. It uses the `viser` library to provide a fluid 3D preview of the reconstruction.
+
+    <p align="center">
+    <img src="TestSamples/animation_results/demo_viser.gif" width="100%">
+    </p>
     
     More demos and training code coming soon.
 
