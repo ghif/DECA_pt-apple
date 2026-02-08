@@ -69,7 +69,7 @@ For visualization, we use a custom standard rasterizer that uses a C++ CPU exten
     ```   
     to visualize the predicted 2D landmanks, 3D landmarks (red means non-visible points), coarse geometry, detailed geometry, and depth.   
     <p align="center">   
-    <img src="Doc/images/id04657-PPHljWCZ53c-000565_inputs_inputs_vis.jpg">
+    <img src="Doc/images/ghif_face1_vis.jpg">
     </p>  
     <p align="center">   
     <img src="Doc/images/IMG_0392_inputs_vis.jpg">
@@ -91,10 +91,20 @@ For visualization, we use a custom standard rasterizer that uses a C++ CPU exten
     
     Note that, you need to set '--useTex True' to get full texture.   
 
-    c. for the [teaser gif](https://github.com/YadiraF/DECA/results/teaser.gif) (**reposing** and **animation**)
+    c. **teaser gif (reposing and animation)**
     ```bash
     python demos/demo_teaser.py 
     ``` 
+    Generates a full animation preview showing reposing and expression transfer with skin textures:
+    <p align="center"> 
+    <img src="TestSamples/teaser/results/teaser.gif">
+    </p>
+
+    d. **interactive dashboard (Viser)**
+    ```bash
+    python demos/demo_viser.py -i TestSamples/examples/ghif_face1.jpg
+    ```
+    Provides a real-time, web-based interactive dashboard to "dial" expressions, shape, and lighting. It uses the `viser` library to provide a fluid 3D preview of the reconstruction.
     
     More demos and training code coming soon.
 

@@ -255,7 +255,6 @@ class DECA(nn.Module):
             opdict['albedo'] = albedo
             
         if use_detail:
-            print(f"[Decode] Using detail decoder")
             uv_z = self.D_detail(torch.cat([codedict['pose'][:,3:], codedict['exp'], codedict['detail']], dim=1))
             if iddict is not None:
                 uv_z = self.D_detail(torch.cat([iddict['pose'][:,3:], iddict['exp'], codedict['detail']], dim=1))
@@ -331,14 +330,10 @@ class DECA(nn.Module):
             if use_detail:
                 visdict['uv_detail_normals'] = uv_detail_normals*0.5 + 0.5
 
-            if self.cfg.model.use_tex:
-                if self.cfg.model.extract_tex:
-                    # Render with the extracted texture. 
-                    # Use lights=None because uv_texture_gt already has shading (real or model-based)
-                    ops_gt = self.render(verts, trans_verts, uv_texture_gt, h=h, w=w, background=background)
-                    visdict['rendered_images'] = ops_gt['images']
-                else:
-                    visdict['rendered_images'] = ops['images']
+            # Render with the extracted/calculated texture for the visualization grid
+            # Use lights=None because uv_texture_gt already has shading (real or model-based)
+            ops_gt = self.render(verts, trans_verts, uv_texture_gt, h=h, w=w, background=background)
+            visdict['rendered_images'] = ops_gt['images']
             # if self.cfg.model.use_tex:
             #     visdict['rendered_images'] = ops['images']
 

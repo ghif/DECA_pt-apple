@@ -41,7 +41,7 @@ def main(args):
     
     @server.on_client_connect
     def _(client: viser.ClientHandle) -> None:
-        client.camera.position = (0.0, 0.0, 0.5)
+        client.camera.position = (0.0, 0.0, 3.0)
         client.camera.look_at = (0.0, 0.0, 0.0)
 
     print(f"Viser server started at http://localhost:{server.get_port()}")
@@ -357,6 +357,14 @@ def main(args):
                     update_mesh()
                 return handler
             slider.on_update(make_cam_handler(i))
+        
+        btn_reset_view = server.gui.add_button("Reset Viewport Camera")
+        @btn_reset_view.on_click
+        def _(event: viser.GuiEvent):
+            client = event.client
+            if client is not None:
+                client.camera.position = (0.0, 0.0, 3.0)
+                client.camera.look_at = (0.0, 0.0, 0.0)
 
     with server.gui.add_folder("Jaw Rotation"):
         jaw_labels = ["Jaw Open/Close", "Jaw Swing (Y)", "Jaw Twist (Z)"]
