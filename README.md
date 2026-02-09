@@ -5,7 +5,7 @@
 </p>
 <p align="center">input image, aligned reconstruction, animation with various poses & expressions<p align="center">
 
-This is a **fork** of the official DECA implementation, refactored to run natively on **Apple Silicon (M1/M2/M3)** using **PyTorch MPS** and removed of all dependencies on **NVIDIA CUDA** and **PyTorch3D**.
+This is a **fork** of the official DECA implementation, refactored to run natively on **Apple Silicon (M1/M2/M3)** using **PyTorch MPS** and removed all dependencies on **NVIDIA CUDA** and **PyTorch3D**.
 
 ### Key Changes in this Fork:
 *   **Apple Silicon Support:** Native acceleration via `device='mps'`.
@@ -110,7 +110,6 @@ For visualization, we use a custom standard rasterizer that uses a C++ CPU exten
     <img src="TestSamples/animation_results/demo_viser.gif" width="100%">
     </p>
     
-    More demos and training code coming soon.
 
 ## Evaluation
 DECA (ours) achieves 9% lower mean shape reconstruction error on the [NoW Challenge](https://ringnet.is.tue.mpg.de/challenge) dataset compared to the previous state-of-the-art method.  
